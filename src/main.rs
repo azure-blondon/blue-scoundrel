@@ -1,5 +1,5 @@
 use std::fmt::Display;
-use std::io::{self, Write, Read};
+use std::io::{self, Read};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Debug, PartialEq)]
@@ -549,5 +549,5 @@ fn main() {
             .status()
             .expect("Failed to restore terminal mode");
     }
-    }
+}
 
