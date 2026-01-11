@@ -39,7 +39,7 @@ enum Rank {
 }
 
 impl Rank {
-    fn value(&self) -> u32 {
+    fn value(&self) -> u8 {
         match self {
             Rank::Two => 2,
             Rank::Three => 3,
@@ -141,7 +141,7 @@ struct Board {
     pub table_pile: Vec<Card>,
     pub discard_pile: Vec<Card>,
     pub player_hand: Vec<Card>,
-    pub player_hp: u32,
+    pub player_hp: u8,
     pub selection: Option<Selection>,
 }
 
@@ -293,9 +293,6 @@ fn handle_input(board: &mut Board) -> bool {
         Ok(KeyPress::Char('q')) => {
             return false;
         }
-        Ok(KeyPress::Char('?')) => {
-            show_help();
-        }
         Ok(KeyPress::Char('e')) => {
             handle_equip_action(board);
         }
@@ -306,7 +303,7 @@ fn handle_input(board: &mut Board) -> bool {
             handle_weapon_attack_action(board);
         }
         Ok(KeyPress::Char('h')) => {
-            handle_heal_action(board);
+            handle_h_action(board);
         }
         Ok(KeyPress::Char('d')) => {
             handle_discard_action(board);
@@ -457,14 +454,17 @@ fn handle_weapon_attack_action(board: &mut Board) {
     }
 }
 
-fn handle_heal_action(board: &mut Board) {
-    if let Some(Selection::TablePile(i)) = &board.selection {
-        let index = *i;
-        if index < board.table_pile.len() {
-            let card = board.table_pile.remove(index);
-            board.player_hp += card.rank.value();
-            board.discard_pile.push(card);
+fn handle_h_action(board: &mut Board) {
+    match board.selection {
+        Some(Selection::TablePile(i)) => {
+            let index = i;
+            if index < board.table_pile.len() {
+                let card = board.table_pile.remove(index);
+                board.player_hp += card.rank.value();
+                board.discard_pile.push(card);
+            }
         }
+        _ => show_help(),
     }
 }
 
@@ -498,17 +498,20 @@ fn handle_run_action(board: &mut Board) {
 fn show_help() {
     println!("\n=== CONTROLS ===");
     println!("Arrow Keys - Navigate");
-    println!("Enter - Select");
     println!("f - Fill room");
+    println!("r - Run");
     println!("h - Help");
     println!("q - Quit");
     println!("\n=== ACTIONS (when card selected) ===");
     println!("e - Equip weapon");
     println!("a - Attack without weapon");
     println!("w - Attack with weapon");
-    println!("h - Heal");
+    println!("h - Heal (overwrites help)");
     println!("d - Discard");
     println!();
+
+    println!("Press Enter to continue...");
+    let _ = io::stdin().read_line(&mut String::new());
 }
 
 
@@ -526,7 +529,7 @@ fn main() {
     let mut board = Board::new();
     board.setup();
 
-    board.filter_draw_pile(|card| matches!(card.color, Color::Diamond) && card.rank.value() > Rank::Ten.value());
+    board.filter_draw_pile(|card| (matches!(card.color, Color::Diamond) || matches!(card.color, Color::Heart)) && card.rank.value() > Rank::Ten.value());
 
     board.fill_room();
     while handle_input(&mut board) {
