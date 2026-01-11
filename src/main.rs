@@ -1,7 +1,17 @@
 use std::fmt::Display;
-
+use std::io::{self, Write, Read};
 use rand::{rng, seq::SliceRandom};
 
+#[derive(Debug, PartialEq)]
+enum KeyPress {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Char(char),
+    Unknown,
+}
 
 #[derive(Clone, Copy)]
 enum Color {
@@ -88,6 +98,15 @@ impl Card {
     }
 }
 
+
+#[derive(PartialEq, Clone)]
+enum Selection {
+    DrawPile,
+    TablePile(usize),
+    PlayerHand(usize),
+}
+
+
 impl Display for Card {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let color_str = match self.color {
@@ -123,6 +142,7 @@ struct Board {
     pub discard_pile: Vec<Card>,
     pub player_hand: Vec<Card>,
     pub player_hp: u32,
+    pub selection: Option<Selection>,
 }
 
 
@@ -134,6 +154,7 @@ impl Board {
             discard_pile: Vec::new(),
             player_hand: Vec::new(),
             player_hp: 20,
+            selection: None,
         }
     }
 
@@ -143,16 +164,30 @@ impl Board {
     }
 
     fn show(&self) {
-        println!("left: {}", self.draw_pile.len());
-        println!(
-            "room: {}",
-            self.table_pile.iter().map(|card| card.to_string()).collect::<Vec<_>>().join(" ")
-        );
-        println!(
-            "{:.2}hp  {}",
-            self.player_hp,
-            self.player_hand.iter().map(|card| card.to_string()).collect::<Vec<_>>().join(" ")
-        );
+        if self.selection == Some(Selection::DrawPile) {
+            println!("left: [{}] ", self.draw_pile.len());
+        } else {
+            println!("left:  {}  ", self.draw_pile.len());
+        }
+        print!("room: ");
+        for (i, card) in self.table_pile.iter().enumerate() {
+            if self.selection == Some(Selection::TablePile(i)) {
+                print!("[{}] ", card);
+                continue;
+            }
+            print!(" {}  ", card);
+        }
+        println!();
+        print!("{:2}hp  ", self.player_hp);
+
+        for (i, card) in self.player_hand.iter().enumerate() {
+            if self.selection == Some(Selection::PlayerHand(i)) {
+                print!("[{}] ", card);
+                continue;
+            }
+            print!(" {}  ", card);
+        }
+        println!();
     }
 
     fn filter_draw_pile(&mut self, condition: impl Fn(&Card) -> bool) {
@@ -204,113 +239,315 @@ impl Board {
 }
 
 
+
+fn read_key() -> io::Result<KeyPress> {
+    let mut buffer = [0; 1];
+    io::stdin().read_exact(&mut buffer)?;
+    
+    match buffer[0] {
+        b'\n' | b'\r' => Ok(KeyPress::Enter),
+        b'\x1b' => {
+            // Escape sequence
+            let mut seq = [0; 2];
+            if io::stdin().read_exact(&mut seq).is_ok() {
+                if seq[0] == b'[' {
+                    match seq[1] {
+                        b'A' => Ok(KeyPress::Up),
+                        b'B' => Ok(KeyPress::Down),
+                        b'C' => Ok(KeyPress::Right),
+                        b'D' => Ok(KeyPress::Left),
+                        _ => Ok(KeyPress::Unknown),
+                    }
+                } else {
+                    Ok(KeyPress::Unknown)
+                }
+            } else {
+                Ok(KeyPress::Unknown)
+            }
+        }
+        c if c.is_ascii() => Ok(KeyPress::Char(c as char)),
+        _ => Ok(KeyPress::Unknown),
+    }
+}
+
 fn handle_input(board: &mut Board) -> bool {
-    use std::io::{self, Write};
+    print!("\x1B[2J\x1B[1;1H");
+    board.show();
 
-    print!("> ");
-    io::stdout().flush().unwrap();
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    let parts: Vec<&str> = input.trim().split_whitespace().collect();
-
-    match parts.as_slice() {
-        ["e", index_str] => {
-            if let Ok(index) = index_str.parse::<usize>() {
-                if index < board.table_pile.len() {
-                    let card = board.table_pile.remove(index);
-                    board.equip_weapon(card);
-                } else {
-                    println!("Invalid index.");
-                }
-            }
+    match read_key() {
+        Ok(KeyPress::Left) => {
+            move_selection_left(board);
         }
-        ["a", index_str] => {
-            if let Ok(index) = index_str.parse::<usize>() {
-                if index < board.table_pile.len() {
-                    board.attack_no_weapon(index);
-                } else {
-                    println!("Invalid index.");
-                }
-            }
+        Ok(KeyPress::Right) => {
+            move_selection_right(board);
         }
-        ["w", index_str] => {
-            if let Ok(index) = index_str.parse::<usize>() {
-                if index < board.table_pile.len() {
-                    board.attack_with_weapon(index);
-                } else {
-                    println!("Invalid index.");
-                }
-            }
+        Ok(KeyPress::Up) => {
+            move_selection_up(board);
         }
-        ["f"] => {
+        Ok(KeyPress::Down) => {
+            move_selection_down(board);
+        }
+        Ok(KeyPress::Enter) => {
+            handle_enter_action(board);
+        }
+        Ok(KeyPress::Char('q')) => {
+            return false;
+        }
+        Ok(KeyPress::Char('?')) => {
+            show_help();
+        }
+        Ok(KeyPress::Char('e')) => {
+            handle_equip_action(board);
+        }
+        Ok(KeyPress::Char('a')) => {
+            handle_attack_action(board);
+        }
+        Ok(KeyPress::Char('w')) => {
+            handle_weapon_attack_action(board);
+        }
+        Ok(KeyPress::Char('h')) => {
+            handle_heal_action(board);
+        }
+        Ok(KeyPress::Char('d')) => {
+            handle_discard_action(board);
+        }
+        Ok(KeyPress::Char('r')) => {
+            handle_run_action(board);
+        }
+        Ok(KeyPress::Char('f')) => {
             board.fill_room();
         }
-        ["r"] => {
-            board.table_pile.shuffle(&mut rng());
-            for _ in 0..=3 {
-                if let Some(card) = board.table_pile.pop() {
-                    board.draw_pile.insert(0, card);
-                }
-            }
-            board.fill_room();
-        }
-        ["h", index_str] => { // heal
-            if let Ok(index) = index_str.parse::<usize>() {
-                if index < board.table_pile.len() {
-                    let card = board.table_pile.remove(index);
-                    board.player_hp += card.rank.value();
-                    board.discard_pile.push(card);
-                } else {
-                    println!("Invalid index.");
-                }
-            }
-        }
-        ["d", index_str] => { // discard
-            if let Ok(index) = index_str.parse::<usize>() {
-                if index < board.table_pile.len() {
-                    let card = board.table_pile.remove(index);
-                    board.discard_pile.push(card);
-                } else {
-                    println!("Invalid index.");
-                }
-            }
-        }
-        ["d"] => {
-            board.discard_player_hand();
-        }
-        ["q"] => return false,
-        ["h"] => {
-            println!("Commands:");
-            println!("h - Show this help message");
-            println!("e <index> - Equip weapon from table pile at index");
-            println!("a <index> - Attack without weapon at table pile index");
-            println!("w <index> - Attack with equipped weapon at table pile index");
-            println!("r - Run from the room puts it at the back of the draw pile");
-            println!("h <index> - Heal using card at table pile index");
-            println!("d <index> - Discard card from table pile at index");
-            println!("d - Discard your entire hand");
-            println!("f - Fill the room with cards from draw pile");
-            println!("q - Quit the game");
-        }
-        _ => println!("Invalid command."),
+        _ => {}
     }
 
     true
 }
 
 
+fn move_selection_left(board: &mut Board) {
+    match &board.selection {
+        None => {
+            board.selection = Some(Selection::DrawPile);
+        }
+        Some(Selection::DrawPile) => {
+
+        }
+        Some(Selection::TablePile(i)) => {
+            if *i > 0 {
+                board.selection = Some(Selection::TablePile(i - 1));
+            } else {
+                board.selection = Some(Selection::DrawPile);
+            }
+        }
+        Some(Selection::PlayerHand(i)) => {
+            if *i > 0 {
+                board.selection = Some(Selection::PlayerHand(i - 1));
+            } else if !board.table_pile.is_empty() {
+                board.selection = Some(Selection::TablePile(board.table_pile.len() - 1));
+            } else {
+                board.selection = Some(Selection::DrawPile);
+            }
+        }
+    }
+}
+
+fn move_selection_right(board: &mut Board) {
+    match &board.selection {
+        None => {
+            board.selection = Some(Selection::DrawPile);
+        }
+        Some(Selection::DrawPile) => {
+            if !board.table_pile.is_empty() {
+                board.selection = Some(Selection::TablePile(0));
+            } else if !board.player_hand.is_empty() {
+                board.selection = Some(Selection::PlayerHand(0));
+            }
+        }
+        Some(Selection::TablePile(i)) => {
+            if *i < board.table_pile.len() - 1 {
+                board.selection = Some(Selection::TablePile(i + 1));
+            } else if !board.player_hand.is_empty() {
+                board.selection = Some(Selection::PlayerHand(0));
+            }
+        }
+        Some(Selection::PlayerHand(i)) => {
+            if *i < board.player_hand.len() - 1 {
+                board.selection = Some(Selection::PlayerHand(i + 1));
+            }
+        }
+    }
+}
+
+fn move_selection_up(board: &mut Board) {
+    match &board.selection {
+        None => {
+            board.selection = Some(Selection::DrawPile);
+        }
+        Some(Selection::PlayerHand(i)) => {
+            if !board.table_pile.is_empty() {
+                let new_index = (*i).min(board.table_pile.len() - 1);
+                board.selection = Some(Selection::TablePile(new_index));
+            } else {
+                board.selection = Some(Selection::DrawPile);
+            }
+        }
+        Some(Selection::TablePile(_)) => {
+            board.selection = Some(Selection::DrawPile);
+        }
+        _ => {}
+    }
+}
+
+fn move_selection_down(board: &mut Board) {
+    match &board.selection {
+        None => {
+            board.selection = Some(Selection::DrawPile);
+        }
+        Some(Selection::DrawPile) => {
+            if !board.table_pile.is_empty() {
+                board.selection = Some(Selection::TablePile(0));
+            }
+        }
+        Some(Selection::TablePile(i)) => {
+            if !board.player_hand.is_empty() {
+                let new_index = (*i).min(board.player_hand.len() - 1);
+                board.selection = Some(Selection::PlayerHand(new_index));
+            }
+        }
+        _ => {}
+    }
+}
+
+
+
+fn handle_enter_action(board: &mut Board) {
+    match &board.selection {
+        Some(Selection::DrawPile) => {
+            board.fill_room();
+        }
+        _ => {}
+    }
+}
+
+fn handle_equip_action(board: &mut Board) {
+    if let Some(Selection::TablePile(i)) = &board.selection {
+        let index = *i;
+        if index < board.table_pile.len() {
+            let card = board.table_pile.remove(index);
+            board.equip_weapon(card);
+        }
+    }
+}
+
+fn handle_attack_action(board: &mut Board) {
+    if let Some(Selection::TablePile(i)) = &board.selection {
+        let index = *i;
+        if index < board.table_pile.len() {
+            board.attack_no_weapon(index);
+        }
+    }
+}
+
+fn handle_weapon_attack_action(board: &mut Board) {
+    if let Some(Selection::TablePile(i)) = &board.selection {
+        let index = *i;
+        if index < board.table_pile.len() {
+            board.attack_with_weapon(index);
+        }
+    }
+}
+
+fn handle_heal_action(board: &mut Board) {
+    if let Some(Selection::TablePile(i)) = &board.selection {
+        let index = *i;
+        if index < board.table_pile.len() {
+            let card = board.table_pile.remove(index);
+            board.player_hp += card.rank.value();
+            board.discard_pile.push(card);
+        }
+    }
+}
+
+fn handle_discard_action(board: &mut Board) {
+    match &board.selection {
+        Some(Selection::TablePile(i)) => {
+            let index = *i;
+            if index < board.table_pile.len() {
+                let card = board.table_pile.remove(index);
+                board.discard_pile.push(card);
+            }
+        }
+        Some(Selection::PlayerHand(_)) => {
+            board.discard_player_hand();
+        }
+        _ => {}
+    }
+}
+
+fn handle_run_action(board: &mut Board) {
+    board.table_pile.shuffle(&mut rng());
+    for _ in 0..=3 {
+        if let Some(card) = board.table_pile.pop() {
+            board.draw_pile.insert(0, card);
+        }
+    }
+    board.fill_room();
+}
+
+
+fn show_help() {
+    println!("\n=== CONTROLS ===");
+    println!("Arrow Keys - Navigate");
+    println!("Enter - Select");
+    println!("f - Fill room");
+    println!("h - Help");
+    println!("q - Quit");
+    println!("\n=== ACTIONS (when card selected) ===");
+    println!("e - Equip weapon");
+    println!("a - Attack without weapon");
+    println!("w - Attack with weapon");
+    println!("h - Heal");
+    println!("d - Discard");
+    println!();
+}
+
+
 fn main() {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        Command::new("stty")
+            .args(&["-icanon", "-echo"])
+            .status()
+            .expect("Failed to set terminal mode");
+    }
+
+
     let mut board = Board::new();
     board.setup();
 
     board.filter_draw_pile(|card| matches!(card.color, Color::Diamond) && card.rank.value() > Rank::Ten.value());
 
     board.fill_room();
-    print!("\x1B[2J\x1B[1;1H");
-    board.show();
     while handle_input(&mut board) {
-        print!("\x1B[2J\x1B[1;1H");
-        board.show();
+        if board.player_hp == 0 {
+            println!("You have been defeated!");
+            break;
+        }
+        if board.draw_pile.is_empty() && board.table_pile.is_empty() {
+            println!("You have cleared all cards! Victory!");
+            break;
+        }
     }
-}
+
+    
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        Command::new("stty")
+            .args(&["icanon", "echo"])
+            .status()
+            .expect("Failed to restore terminal mode");
+    }
+    }
+
