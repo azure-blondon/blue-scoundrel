@@ -7,12 +7,13 @@ this is an implementation of the solitaire board game called [scoundrel](http://
 
 this projects requires rust and cargo.
 
-to build the project, simply clone it and run it.
+to build the project, simply clone it, build it and run it.
 
 ```bash
 git clone https://github.com/azure-blondon/blue-scoundrel.git
 cd blue-scoundrel
-cargo run
+cargo build --release
+./target/release/blue-scoundrel
 ```
 
 
